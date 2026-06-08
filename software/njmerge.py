@@ -24,7 +24,7 @@ import dendropy
 from dendropy.calculate.treecompare import false_positives_and_negatives
 import numpy
 import os
-from string import maketrans
+maketrans = str.maketrans
 import subprocess
 import sys
 import time
@@ -829,7 +829,7 @@ def main(args):
         	trees.append(dendropy.Tree.get(path=tree, schema="newick"))
     	te = time.time()
     	t = te - ts
-    	print "Read all trees in %f seconds" % t
+    	print("Read all trees in %f seconds" % t)
 
     # Read taxa list
     if args.taxa_file is None:
@@ -852,14 +852,14 @@ def main(args):
                 dmat[i, :] = row
     te = time.time()
     t = te - ts
-    print "Read matrix into numpy array in %f seconds" % t
+    print("Read matrix into numpy array in %f seconds" % t)
 
     # TODO: Make this faster!
     ts = time.time()
     pdm = matrix_to_dendropy_pdm(dmat, taxa)
     te = time.time()
     t = te - ts
-    print "Converted numpy matrix into a dictionary in %f seconds" % t
+    print("Converted numpy matrix into a dictionary in %f seconds" % t)
 
     # Build tree
     ts = time.time()
@@ -873,7 +873,7 @@ def main(args):
     	
     te = time.time()
     t = te - ts
-    print "Built NJ(Merge) tree in %f seconds" % t
+    print("Built NJ(Merge) tree in %f seconds" % t)
 
     with open(args.output_file, "w") as f:
         f.write(merged_tree.as_string(schema="newick")[5:])

@@ -18,7 +18,7 @@ import dendropy
 from dendropy.calculate.treecompare import false_positives_and_negatives
 import numpy
 import os
-from string import maketrans
+maketrans = str.maketrans
 import subprocess
 import sys
 

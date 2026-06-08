@@ -149,7 +149,7 @@ def set_zeros_to_half_shortest(tree):
 
     """
     elens = [e.length for e in tree.postorder_edge_iter()]
-    elens = filter(None, elens)
+    elens = [_f for _f in elens if _f]
     elens = numpy.array(elens)
 
     min_elen = numpy.min(elens)

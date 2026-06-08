@@ -48,7 +48,7 @@ def tree_to_mst(strefile, treefiles):
         li = ti.leaf_nodes()[0].taxon.label
         ltos[li] = i
 
-    labs = ltos.keys()
+    labs = list(ltos.keys())
     stre.retain_taxa_with_labels(labs)
     stre.collapse_basal_bifurcation(set_as_unrooted_tree=True)
 
@@ -69,13 +69,13 @@ def tree_to_mst(strefile, treefiles):
             dmat[i, j] = pdm._taxon_phylogenetic_distances[xi][xj]
 
     # Turn distance matrix into graph
-    graph = networkx.from_numpy_matrix(dmat)
+    graph = networkx.from_numpy_array(dmat)
 
     # Turn graph into MST
     mst = networkx.minimum_spanning_tree(graph)
 
     # Return MST as an adjacency matrix
-    amat = networkx.to_numpy_matrix(mst)
+    amat = networkx.to_numpy_array(mst)
     amat[amat > 0] = 1
 
     return amat
@@ -179,7 +179,7 @@ def main(args):
     # Build MST from starting tree
     ts = time.time()
     mst = tree_to_mst(strefile, treefiles)
-    print mst
+    print(mst)
     rt = time.time() - ts
     sys.stdout.write("...computed MST in %d seconds.\n" % rt)
 
