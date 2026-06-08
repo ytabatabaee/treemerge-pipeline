@@ -27,10 +27,11 @@ python run_dtm_pipeline.py \
     --gene_trees example/estimated_gene_trees.txt \
     --outdir results \
     --astrid_bin software/ASTRID-linux \
-    --astral4_bin software/astral4 \
+    --astral4_bin software/astral4-linux \
+    --fastme_bin software/fastme-2.1.5-linux64 \
     --treemerge_script software/treemerge.py \
-    --paup software/paup4a168_ubuntu64 \
-    --threads 32 \
+    --paup "$(pwd)/software/paup4a168_centos64" \
+    --threads 4 \
     --max_subset_size 100
 ```
 

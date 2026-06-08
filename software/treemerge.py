@@ -515,7 +515,7 @@ def dscmcombine(workdir, trees, mstmat, outfile):
     while len(nodes) > 0:
         if root is None:
             root = next_roots[0]
-        neighbors = graph.neighbors(root)
+        neighbors = list(graph.neighbors(root))
         next_roots = list(set(next_roots).union(set(neighbors)))
         if len(neighbors) == 0:
             nodes.remove(root)
