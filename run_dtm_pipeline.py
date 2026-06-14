@@ -3,11 +3,167 @@
 import argparse
 import multiprocessing as mp
 import os
+import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from ete3 import Tree
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+SOFTWARE_DIR = REPO_ROOT / "software"
+
+LINUX_X86_64_DEFAULTS = {
+    "astrid_bin": SOFTWARE_DIR / "ASTRID-linux",
+    "fastme_bin": SOFTWARE_DIR / "fastme-2.1.5-linux64",
+    "astral4_bin": SOFTWARE_DIR / "astral4-linux",
+    "treemerge_script": SOFTWARE_DIR / "treemerge.py",
+    "paup": [
+        SOFTWARE_DIR / "paup4a169_ubuntu64",
+        SOFTWARE_DIR / "paup4a168_centos64",
+    ],
+}
+
+DARWIN_COMMON_DEFAULTS = {
+    "astrid_bin": SOFTWARE_DIR / "ASTRID-osx",
+    "fastme_bin": SOFTWARE_DIR / "fastme-2.1.5-osx",
+    "treemerge_script": SOFTWARE_DIR / "treemerge.py",
+    "paup": SOFTWARE_DIR / "paup4a168_osx",
+}
+
+
+def bundled_defaults():
+    system = platform.system()
+    machine = platform.machine().lower()
+
+    if system == "Linux" and machine in {"x86_64", "amd64"}:
+        return LINUX_X86_64_DEFAULTS
+
+    if system == "Darwin":
+        defaults = dict(DARWIN_COMMON_DEFAULTS)
+        if machine == "arm64":
+            defaults["astral4_bin"] = SOFTWARE_DIR / "astral4-osx"
+        return defaults
+
+    return {}
+
+
+def executable_label(name):
+    return name.replace("_", "-")
+
+
+def paup_smoke_test(path):
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".nex",
+        prefix="treemerge-paup-check-",
+        delete=False,
+    ) as handle:
+        handle.write("#NEXUS\nbegin paup;\nq;\nend;\n")
+        check_file = handle.name
+
+    try:
+        result = subprocess.run(
+            [str(path), "-n", check_file],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        try:
+            os.unlink(check_file)
+        except OSError:
+            pass
+
+
+def resolve_paup_candidate(candidates):
+    if not isinstance(candidates, list):
+        candidates = [candidates]
+
+    existing = []
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.exists() and os.access(path, os.X_OK):
+            existing.append(path)
+            if paup_smoke_test(path):
+                return path
+
+    if existing:
+        return existing[0]
+
+    return Path(candidates[0]).expanduser()
+
+
+def resolve_tool_paths(args):
+    defaults = bundled_defaults()
+
+    for name in [
+        "astrid_bin",
+        "fastme_bin",
+        "astral4_bin",
+        "treemerge_script",
+        "paup",
+    ]:
+        value = getattr(args, name)
+        if value is None and name in defaults:
+            if name == "paup":
+                value = resolve_paup_candidate(defaults[name])
+            else:
+                value = defaults[name]
+        if value is not None:
+            setattr(args, name, str(Path(value).expanduser()))
+
+    missing = [
+        name
+        for name in [
+            "astrid_bin",
+            "fastme_bin",
+            "astral4_bin",
+            "treemerge_script",
+            "paup",
+        ]
+        if getattr(args, name) is None
+    ]
+
+    if missing:
+        labels = ", ".join(f"--{executable_label(name)}" for name in missing)
+        system = platform.system() or "unknown"
+        machine = platform.machine() or "unknown"
+        raise RuntimeError(
+            f"No bundled defaults are available for {system} {machine}: {labels}. "
+            "Pass these paths explicitly or run on a platform with compatible "
+            "bundled tools."
+        )
+
+    validate_tool_paths(args)
+
+
+def validate_tool_paths(args):
+    for name in [
+        "astrid_bin",
+        "fastme_bin",
+        "astral4_bin",
+        "paup",
+    ]:
+        path = Path(getattr(args, name))
+        if not path.exists():
+            raise RuntimeError(f"--{executable_label(name)} does not exist: {path}")
+        if not os.access(path, os.X_OK):
+            raise RuntimeError(
+                f"--{executable_label(name)} is not executable: {path}\n"
+                f"Run: chmod +x {path}"
+            )
+
+    treemerge_script = Path(args.treemerge_script)
+    if not treemerge_script.exists():
+        raise RuntimeError(f"--treemerge-script does not exist: {treemerge_script}")
+    if not treemerge_script.is_file():
+        raise RuntimeError(f"--treemerge-script is not a file: {treemerge_script}")
 
 
 def run(cmd, log_file=None):
@@ -287,11 +443,30 @@ def main():
     parser.add_argument("--gene_trees", required=True)
     parser.add_argument("--outdir", required=True)
 
-    parser.add_argument("--astrid_bin", required=True)
-    parser.add_argument("--fastme_bin", required=True)
-    parser.add_argument("--astral4_bin", required=True)
-    parser.add_argument("--treemerge_script", required=True)
-    parser.add_argument("--paup", required=True)
+    parser.add_argument(
+        "--astrid-bin",
+        "--astrid_bin",
+        help="Path to ASTRID. Defaults to bundled binary when available.",
+    )
+    parser.add_argument(
+        "--fastme-bin",
+        "--fastme_bin",
+        help="Path to FastME. Defaults to bundled binary when available.",
+    )
+    parser.add_argument(
+        "--astral4-bin",
+        "--astral4_bin",
+        help="Path to ASTRAL4. Defaults to bundled binary when available.",
+    )
+    parser.add_argument(
+        "--treemerge-script",
+        "--treemerge_script",
+        help="Path to treemerge.py. Defaults to bundled script.",
+    )
+    parser.add_argument(
+        "--paup",
+        help="Path to PAUP*. Defaults to bundled binary when available.",
+    )
 
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--max_subset_size", type=int, default=100)
@@ -311,6 +486,7 @@ def main():
     )
 
     args = parser.parse_args()
+    resolve_tool_paths(args)
 
     outdir = Path(args.outdir)
     intermediate = outdir / "intermediate"
