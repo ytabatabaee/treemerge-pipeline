@@ -46,6 +46,30 @@ Both commands can make conda spend a long time reconciling old packages in an
 existing environment. If conda solving is slow on your machine, use the `venv`
 instructions above.
 
+If conda is not available, use microconda locally in your project directory.
+```bash
+cd ~/treemerge-pipeline
+
+# download micromamba
+mkdir -p ~/bin
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C ~/bin --strip-components=1 bin/micromamba
+
+# initialize shell
+~/bin/micromamba shell init -s bash -r ~/micromamba
+source ~/.bashrc
+```
+
+Then create the environment 
+
+```bash
+micromamba create -n treemerge python=3.9 -y
+micromamba activate treemerge
+
+python --version
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+```
+
 Check that the Python packages and bundled external tools are available:
 
 ```bash
