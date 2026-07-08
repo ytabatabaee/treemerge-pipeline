@@ -115,6 +115,7 @@ def resolve_tool_paths(args):
                 value = resolve_paup_candidate(defaults[name])
             else:
                 value = defaults[name]
+
         if value is not None:
             setattr(args, name, str(Path(value).expanduser()))
 
@@ -136,8 +137,7 @@ def resolve_tool_paths(args):
         machine = platform.machine() or "unknown"
         raise RuntimeError(
             f"No bundled defaults are available for {system} {machine}: {labels}. "
-            "Pass these paths explicitly or run on a platform with compatible "
-            "bundled tools."
+            "Pass these paths explicitly."
         )
 
     validate_tool_paths(args)
@@ -168,42 +168,76 @@ def validate_tool_paths(args):
 
 def run(cmd, log_file=None):
     cmd = [str(x) for x in cmd]
+
     print("\n[RUN]")
     print(" ".join(cmd))
     sys.stdout.flush()
 
     if log_file:
+        log_file = str(log_file)
+
         with open(log_file, "w") as log:
             result = subprocess.run(
                 cmd,
                 stdout=log,
                 stderr=subprocess.STDOUT,
+                text=True,
             )
-    else:
-        result = subprocess.run(cmd)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Command failed:\n{' '.join(cmd)}")
+        if result.returncode != 0:
+            try:
+                with open(log_file) as f:
+                    log_contents = f.read()
+            except OSError:
+                log_contents = "(Could not read log file.)"
+
+            raise RuntimeError(
+                f"Command failed with exit code {result.returncode}:\n"
+                f"{' '.join(cmd)}\n\n"
+                f"Log file: {log_file}\n\n"
+                f"Log contents:\n{log_contents}"
+            )
+
+    else:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Command failed with exit code {result.returncode}:\n"
+                f"{' '.join(cmd)}\n\n"
+                f"STDOUT:\n{result.stdout}\n\n"
+                f"STDERR:\n{result.stderr}"
+            )
 
 
 def mkdir(path):
     os.makedirs(path, exist_ok=True)
 
 
+def require_nonempty_file(path, label):
+    path = Path(path)
+    if not path.exists():
+        raise RuntimeError(f"{label} was not created: {path}")
+    if path.stat().st_size == 0:
+        raise RuntimeError(f"{label} is empty: {path}")
+
+
 def run_astrid(astrid_bin, gene_trees, agid_matrix, log_file):
     run([astrid_bin, "-i", gene_trees, "-c", agid_matrix], log_file)
+    require_nonempty_file(agid_matrix, "ASTRID AGID matrix")
 
 
 def infer_starting_tree(fastme_bin, agid_matrix, starting_tree, log_file):
-    run([fastme_bin, "-i", agid_matrix, "-o", starting_tree], log_file)
+    run([fastme_bin, "-i", agid_matrix, "-o", starting_tree, "-mN"], log_file)
+    require_nonempty_file(starting_tree, "FastME starting tree")
 
 
 def centroid_bisect_taxa(component_taxa, starting_tree_file, min_subset_size=5):
-    """
-    PASTA-style centroid bisection:
-    choose an edge whose deletion gives the most balanced valid split.
-    """
-
     t = Tree(starting_tree_file, format=1)
     t.prune(list(component_taxa), preserve_branch_length=True)
 
@@ -238,14 +272,6 @@ def decompose_like_original_helper(
     max_subset_size,
     min_subset_size=5,
 ):
-    """
-    Reimplementation of tools/build_subsets_from_tree.py behavior:
-
-    - repeatedly bisect using centroid-style edge cuts
-    - keep splitting subsets larger than max_subset_size
-    - require each final subset to have at least 5 taxa
-    """
-
     t = Tree(starting_tree_file, format=1)
     all_taxa = set(t.get_leaf_names())
 
@@ -361,6 +387,8 @@ def build_subset_gene_trees(
 def run_astral4_subset(job):
     astral4_bin, subset_gene_trees, output_tree, log_file = job
 
+    require_nonempty_file(subset_gene_trees, "ASTRAL4 subset input gene tree file")
+
     run(
         [
             astral4_bin,
@@ -371,6 +399,8 @@ def run_astral4_subset(job):
         ],
         log_file,
     )
+
+    require_nonempty_file(output_tree, "ASTRAL4 subset output tree")
 
     return output_tree
 
@@ -386,6 +416,9 @@ def run_treemerge(
     workdir,
     log_file,
 ):
+    for tree in subset_species_trees:
+        require_nonempty_file(tree, "TreeMerge input subset species tree")
+
     cmd = [
         sys.executable,
         treemerge_script,
@@ -412,6 +445,7 @@ def run_treemerge(
     )
 
     run(cmd, log_file)
+    require_nonempty_file(output_tree, "TreeMerge output tree")
 
 
 def score_species_tree(
@@ -424,7 +458,7 @@ def score_species_tree(
     run(
         [
             astral4_bin,
-            "-q",
+            "-C -c",
             species_tree,
             "-i",
             gene_trees,
@@ -433,6 +467,8 @@ def score_species_tree(
         ],
         log_file,
     )
+
+    require_nonempty_file(output_tree, "Final ASTRAL4 scored tree")
 
 
 def main():
@@ -446,30 +482,40 @@ def main():
     parser.add_argument(
         "--astrid-bin",
         "--astrid_bin",
-        help="Path to ASTRID. Defaults to bundled binary when available.",
+        dest="astrid_bin",
+        help="Path to ASTRID.",
     )
     parser.add_argument(
         "--fastme-bin",
         "--fastme_bin",
-        help="Path to FastME. Defaults to bundled binary when available.",
+        dest="fastme_bin",
+        help="Path to FastME.",
     )
     parser.add_argument(
         "--astral4-bin",
         "--astral4_bin",
-        help="Path to ASTRAL4. Defaults to bundled binary when available.",
+        dest="astral4_bin",
+        help="Path to ASTRAL4.",
     )
     parser.add_argument(
         "--treemerge-script",
         "--treemerge_script",
-        help="Path to treemerge.py. Defaults to bundled script.",
+        dest="treemerge_script",
+        help="Path to treemerge.py.",
     )
     parser.add_argument(
         "--paup",
-        help="Path to PAUP*. Defaults to bundled binary when available.",
+        help="Path to PAUP*.",
     )
 
-    parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("--max_subset_size", type=int, default=100)
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--max_subset_size", type=int, default=10)
+
+    parser.add_argument(
+        "--parallel_astral_subsets",
+        action="store_true",
+        help="Run ASTRAL4 subset jobs in parallel. Default is sequential for safer debugging.",
+    )
 
     parser.add_argument(
         "--min_subset_size",
@@ -559,10 +605,12 @@ def main():
 
         if count == 0:
             raise RuntimeError(
-                f"Subset {i} produced zero usable gene trees. "
-                f"Subset taxa file: {subset_file}"
+                f"Subset {i} produced zero usable gene trees.\n"
+                f"Subset taxa file: {subset_file}\n"
+                f"Output file: {outfile}"
             )
 
+        require_nonempty_file(outfile, f"Subset {i} pruned gene tree file")
         subset_gene_tree_files.append(str(outfile))
 
     print("\n========== Step 5: ASTRAL4 subset trees ==========")
@@ -588,8 +636,14 @@ def main():
 
         subset_species_trees.append(str(output_tree))
 
-    with mp.Pool(args.threads) as pool:
-        pool.map(run_astral4_subset, jobs)
+    if args.parallel_astral_subsets:
+        print(f"Running ASTRAL4 subset jobs in parallel with {args.threads} workers")
+        with mp.Pool(args.threads) as pool:
+            pool.map(run_astral4_subset, jobs)
+    else:
+        print("Running ASTRAL4 subset jobs sequentially")
+        for job in jobs:
+            run_astral4_subset(job)
 
     print("\n========== Step 6: TreeMerge ==========")
 
