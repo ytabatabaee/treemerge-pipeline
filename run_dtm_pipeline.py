@@ -4,6 +4,7 @@ import argparse
 import multiprocessing as mp
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -186,8 +187,7 @@ def run(cmd, log_file=None):
 
         if result.returncode != 0:
             try:
-                with open(log_file) as f:
-                    log_contents = f.read()
+                log_contents = Path(log_file).read_text(errors="replace")
             except OSError:
                 log_contents = "(Could not read log file.)"
 
@@ -230,11 +230,99 @@ def require_nonempty_file(path, label):
 def run_astrid(astrid_bin, gene_trees, agid_matrix, log_file):
     run([astrid_bin, "-i", gene_trees, "-c", agid_matrix], log_file)
     require_nonempty_file(agid_matrix, "ASTRID AGID matrix")
+    require_nonempty_file(str(agid_matrix) + "_taxlist", "ASTRID taxlist")
+
+
+def make_fastme_matrix_from_taxlist(
+    agid_matrix,
+    fastme_matrix,
+    prefix="taxon_",
+):
+    agid_matrix = Path(agid_matrix)
+    taxlist = Path(str(agid_matrix) + "_taxlist")
+
+    lines = [
+        line.strip().split()
+        for line in agid_matrix.read_text().splitlines()
+        if line.strip()
+    ]
+
+    taxa = [
+        line.strip()
+        for line in taxlist.read_text().splitlines()
+        if line.strip()
+    ]
+
+    n = int(lines[0][0])
+    rows = lines[1:]
+
+    if len(rows) != n:
+        raise RuntimeError(f"Expected {n} matrix rows, found {len(rows)}")
+
+    if len(taxa) != n:
+        raise RuntimeError(f"Expected {n} taxa in taxlist, found {len(taxa)}")
+
+    with open(fastme_matrix, "w") as out:
+        out.write(f"{n}\n")
+
+        for taxon, row in zip(taxa, rows):
+            dists = row[1:]
+
+            if len(dists) != n:
+                raise RuntimeError(
+                    f"Expected {n} distances for taxon {taxon}, "
+                    f"found {len(dists)}"
+                )
+
+            out.write(f"{prefix}{taxon} " + " ".join(dists) + "\n")
+
+
+def unprefix_tree_labels(infile, outfile, prefix="taxon_"):
+    text = Path(infile).read_text()
+
+    text = re.sub(
+        rf"(?<=[(,]){prefix}([^:,);]+)(?=[:),;])",
+        r"\1",
+        text,
+    )
+
+    Path(outfile).write_text(text)
 
 
 def infer_starting_tree(fastme_bin, agid_matrix, starting_tree, log_file):
-    run([fastme_bin, "-i", agid_matrix, "-o", starting_tree, "-mN"], log_file)
-    require_nonempty_file(starting_tree, "FastME starting tree")
+    agid_matrix = Path(agid_matrix)
+    starting_tree = Path(starting_tree)
+
+    fastme_matrix = agid_matrix.with_name("agid_matrix.fastme_taxlist.phylip")
+    prefixed_tree = starting_tree.with_name("starting_tree.fastme_prefixed.nwk")
+
+    make_fastme_matrix_from_taxlist(
+        agid_matrix,
+        fastme_matrix,
+        prefix="taxon_",
+    )
+
+    run(
+        [
+            fastme_bin,
+            "-mN",
+            "-i",
+            str(fastme_matrix),
+            "-o",
+            str(prefixed_tree),
+        ],
+        log_file,
+    )
+
+    require_nonempty_file(prefixed_tree, "FastME prefixed NJ starting tree")
+
+    unprefix_tree_labels(
+        prefixed_tree,
+        starting_tree,
+        prefix="taxon_",
+    )
+
+    require_nonempty_file(starting_tree, "FastME NJ starting tree")
 
 
 def centroid_bisect_taxa(component_taxa, starting_tree_file, min_subset_size=5):
@@ -458,10 +546,11 @@ def score_species_tree(
     run(
         [
             astral4_bin,
-            "-C -c",
-            species_tree,
             "-i",
             gene_trees,
+            "-C",
+            species_tree,
+            "-c",
             "-o",
             output_tree,
         ],
@@ -514,21 +603,19 @@ def main():
     parser.add_argument(
         "--parallel_astral_subsets",
         action="store_true",
-        help="Run ASTRAL4 subset jobs in parallel. Default is sequential for safer debugging.",
+        help="Run ASTRAL4 subset jobs in parallel. Default is sequential.",
     )
 
     parser.add_argument(
         "--min_subset_size",
         type=int,
         default=5,
-        help="Minimum subset size. Original helper requires at least 5 leaves.",
     )
 
     parser.add_argument(
         "--min_taxa_per_gene_tree",
         type=int,
         default=4,
-        help="Minimum taxa required after pruning a gene tree.",
     )
 
     args = parser.parse_args()
@@ -555,7 +642,7 @@ def main():
         logs / "astrid.log",
     )
 
-    print("\n========== Step 2: FastME starting tree ==========")
+    print("\n========== Step 2: FastME NJ starting tree ==========")
 
     infer_starting_tree(
         args.fastme_bin,
