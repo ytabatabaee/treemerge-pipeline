@@ -5,18 +5,15 @@ This repository provides a fully automated implementation of a divide-and-conque
 The pipeline automates the full workflow using a single command-line interface.
 
 1. AGID matrix estimation from gene trees using ASTRID
-2. Starting tree estimation using FastME
+2. Starting tree estimation using Neighbor Joining (as implemented in FastME)
 3. Recursive taxon decomposition 
 4. Subset species tree estimation using ASTRAL4
 5. TreeMerge for merging subset trees
 6. Final branch support and branch length estimation using ASTRAL4
 
 
-INSTALLATION
+Installation
 ------------
-Use a fresh environment. Do not run the pipeline from the conda `base`
-environment.
-
 Recommended installation with Python `venv` and `pip`:
 
 ```bash
@@ -26,27 +23,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If you use conda, create a fresh environment instead of updating an existing one:
-
-```bash
-conda config --set channel_priority strict
-conda env remove -n treemerge -y
-conda env create -f environment.yml
-conda activate treemerge
-```
-
-Avoid these commands for initial installation:
-
-```bash
-conda env update -f environment.yml
-conda install -n base -c conda-forge mamba -y
-```
-
-Both commands can make conda spend a long time reconciling old packages in an
-existing environment. If conda solving is slow on your machine, use the `venv`
-instructions above.
-
-If conda is not available, use microconda locally in your project directory.
+Alternatively, use can microconda locally in your project directory.
 ```bash
 cd ~/treemerge-pipeline
 
@@ -70,23 +47,15 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 ```
 
-Check that the Python packages and bundled external tools are available:
+Check that the Python packages and bundled external tools are correctly installed:
 
 ```bash
 python check_install.py
 ```
 
-On Linux x86_64 and Apple Silicon macOS, the pipeline detects the bundled ASTRID,
-FastME, ASTRAL4, TreeMerge, and PAUP* tools automatically. For PAUP* on Linux, it tries
-`software/paup4a169_ubuntu64` first and falls back to
-`software/paup4a168_centos64` if the Ubuntu binary does not pass a smoke test.
-The bundled `software/astral4-osx` binary is arm64, so Intel macOS users need to
-provide a compatible ASTRAL4 binary with `--astral4-bin` or run on Linux.
+This code reports which bundled tools are available and which paths need to be supplied manually.
 
-On other platforms, `check_install.py` reports which bundled tools are available
-and which paths need to be supplied manually.
-
-USAGE
+Usage
 -----------
 On Linux x86_64 or Apple Silicon macOS with the bundled tools:
 
