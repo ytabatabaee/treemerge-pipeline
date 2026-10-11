@@ -25,6 +25,11 @@ import time
 
 def tree_to_mst(strefile, treefiles):
     """
+    Uses Fitch's algorithm to derive the spanning tree on subsets from
+    a starting tree, implementing the approach described in Theorem 9
+    (modified to handle the special case where edges less than two edges
+    apart in the starting tree are deleted).
+
     Parameters
     ----------
     strefile : file containing starting tree on full taxon set (newick format)
@@ -32,41 +37,60 @@ def tree_to_mst(strefile, treefiles):
 
     Returns
     -------
-    adjacency matrix for minimum spanning tree (mst) connecting subset tree files
+    adjacency matrix for minimum spanning tree (MST) connecting subset tree files
     """
+    # Step 0: Reading starting tree
     taxa = dendropy.TaxonNamespace()
     stre = dendropy.Tree.get(path=strefile,
                              schema="newick",
                              taxon_namespace=taxa)
 
-    ltos = {}
+    # Step 1: Abstract taxa labels from subset trees
+    subsets = []
     for i, f in enumerate(treefiles):
         ti = dendropy.Tree.get(path=f,
                                schema="newick",
                                taxon_namespace=taxa)
 
-        li = ti.leaf_nodes()[0].taxon.label
-        ltos[li] = i
+        li = [n.taxon.label for n in ti.leaf_nodes()]
+        subsets.append(set(li))
 
-    labs = list(ltos.keys())
-    stre.retain_taxa_with_labels(labs)
-    stre.collapse_basal_bifurcation(set_as_unrooted_tree=True)
+    # Step 2: Run Fitch's algorithm to label each internal node with the
+    # set of subset indices whose taxa appear in that subtree
+    edges = []
+    for n in stre.postorder_node_iter():
+        if n.is_leaf():
+            label = n.taxon.label
+            for i in range(len(subsets)):
+                if label in subsets[i]:
+                    n.subset = set([i])
+        else:
+            children = n.child_nodes()
+            union = children[0].subset
+            inter = children[0].subset
+            for c in children[1:]:
+                union = union.union(c.subset)
+                inter = inter.intersection(c.subset)
+            if len(list(inter)) == 0:
+                n.subset = union
+            else:
+                n.subset = inter
 
-    edges = [e for e in stre.preorder_edge_iter()]
-    for e in edges[1:]:
-        e.length = 1.0
+            if len(list(n.subset)) > 1:
+                edges.append(list(n.subset))
+                if len(list(n.subset)) > 2:
+                    print("WARNING: Bad subset decomposition!\n")
 
-    pdm = stre.phylogenetic_distance_matrix()
-    
-    n = len(labs)
+    n = len(subsets)
     dmat = numpy.zeros((n, n))
-    for li in labs:
-        i = ltos[li]
-        xi = pdm.taxon_namespace.get_taxon(li)
-        for lj in labs:
-            j = ltos[lj]
-            xj = pdm.taxon_namespace.get_taxon(lj)
-            dmat[i, j] = pdm._taxon_phylogenetic_distances[xi][xj]
+    for e in edges:
+        ne = len(e)
+        for i in range(ne - 1):
+            ei = e[i]
+            for j in range(i + 1, ne):
+                ej = e[j]
+                dmat[ei, ej] = 1
+                dmat[ej, ei] = 1
 
     # Turn distance matrix into graph
     graph = networkx.from_numpy_array(dmat)

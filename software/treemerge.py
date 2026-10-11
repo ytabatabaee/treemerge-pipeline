@@ -153,7 +153,7 @@ def set_zeros_to_half_shortest(tree):
     elens = numpy.array(elens)
 
     min_elen = numpy.min(elens)
-    half_min_elen = min_elen / 0.5
+    half_min_elen = min_elen / 2.0
 
     for e in tree.postorder_edge_iter():
         if e.length == 0.0:
