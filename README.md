@@ -9,7 +9,6 @@ The pipeline automates the full workflow using a single command-line interface.
 3. Recursive taxon decomposition 
 4. Subset species tree estimation using ASTRAL4
 5. TreeMerge for merging subset trees
-6. Final branch support and branch length estimation using ASTRAL4
 
 
 Installation
