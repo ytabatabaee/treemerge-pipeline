@@ -536,29 +536,6 @@ def run_treemerge(
     require_nonempty_file(output_tree, "TreeMerge output tree")
 
 
-def score_species_tree(
-    astral4_bin,
-    species_tree,
-    gene_trees,
-    output_tree,
-    log_file,
-):
-    run(
-        [
-            astral4_bin,
-            "-i",
-            gene_trees,
-            "-C",
-            species_tree,
-            "-c",
-            "-o",
-            output_tree,
-        ],
-        log_file,
-    )
-
-    require_nonempty_file(output_tree, "Final ASTRAL4 scored tree")
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -748,23 +725,10 @@ def main():
         logs / "treemerge.log",
     )
 
-    print("\n========== Step 7: Final ASTRAL4 scoring ==========")
-
-    final_tree = outdir / "final_species_tree_scored.nwk"
-
-    score_species_tree(
-        args.astral4_bin,
-        str(merged_tree),
-        args.gene_trees,
-        str(final_tree),
-        logs / "astral4_final_scoring.log",
-    )
-
     print("\n===================================")
     print("PIPELINE COMPLETED")
     print("===================================")
     print(f"\nTreeMerge tree:\n{merged_tree}")
-    print(f"\nFinal scored species tree:\n{final_tree}")
 
 
 if __name__ == "__main__":
