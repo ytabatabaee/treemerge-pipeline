@@ -12,7 +12,6 @@ dependencies:
   - scipy=1.10.*
 
   # ---- Tree / phylogenetics ----
-  - ete3=3.1.3
   - six
   - dendropy=4.6.1
   - networkx

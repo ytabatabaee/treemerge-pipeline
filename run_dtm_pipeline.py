@@ -10,7 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ete3 import Tree
+import dendropy
+from dendropy.utility import bitprocessing
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -325,34 +326,91 @@ def infer_starting_tree(fastme_bin, agid_matrix, starting_tree, log_file):
     require_nonempty_file(starting_tree, "FastME NJ starting tree")
 
 
-def centroid_bisect_taxa(component_taxa, starting_tree_file, min_subset_size=5):
-    t = Tree(starting_tree_file, format=1)
-    t.prune(list(component_taxa), preserve_branch_length=True)
+def _read_original_guide_tree(starting_tree_file):
+    """Read a guide tree using the original centroid-decomposition setup."""
+    tree = dendropy.Tree.get(path=starting_tree_file, schema="newick")
+    tree.is_rooted = False
+    tree.resolve_polytomies(limit=2)
+    tree.collapse_basal_bifurcation()
+    tree.update_bipartitions()
+    return tree
 
-    all_taxa = set(t.get_leaf_names())
 
-    best_split = None
-    best_score = None
+def _original_centroid_edge(tree):
+    """Return the original first minimum-balance eligible edge.
 
-    for node in t.traverse("postorder"):
-        if node.is_root():
+    This is adapted from the original centroid mode in
+    QuickScripts/decomposer.py.  In particular, every nonroot postorder edge
+    is eligible, and the strict ``<`` comparison preserves the original
+    tie-breaking rule.
+    """
+    num_leaves = bitprocessing.num_set_bits(
+        tree.seed_node.tree_leafset_bitmask
+    )
+    best_balance = float("inf")
+    best_edge = None
+
+    for edge in tree.postorder_edge_iter():
+        if edge.tail_node is None:
             continue
 
-        side1 = set(node.get_leaf_names())
-        side2 = all_taxa - side1
+        balance = abs(
+            num_leaves / 2.0
+            - bitprocessing.num_set_bits(edge.bipartition.leafset_bitmask)
+        )
+        if balance < best_balance:
+            best_balance = balance
+            best_edge = edge
 
-        if len(side1) < min_subset_size:
-            continue
-        if len(side2) < min_subset_size:
-            continue
+    if best_edge is None:
+        raise RuntimeError(
+            "Original centroid decomposition found no eligible edge: "
+            f"component has {num_leaves} leaves."
+        )
 
-        score = abs(len(side1) - len(side2))
+    return best_edge
 
-        if best_score is None or score < best_score:
-            best_score = score
-            best_split = (side1, side2)
 
-    return best_split
+def _leaf_labels(tree):
+    return [leaf.taxon.label for leaf in tree.leaf_node_iter()]
+
+
+def _bipartition_by_original_edge(tree, edge):
+    """Split a tree exactly as original decomposer.bipartitionByEdge does."""
+    new_root = edge.head_node
+    edge.tail_node.remove_child(new_root)
+    new_tree = dendropy.Tree(
+        seed_node=new_root,
+        taxon_namespace=tree.taxon_namespace,
+    )
+    tree.update_bipartitions()
+    new_tree.update_bipartitions()
+    return tree, new_tree
+
+
+def centroid_bisect_taxa(
+    component_taxa,
+    starting_tree_file,
+    min_subset_size=5,
+):
+    """Return the original centroid-edge split for one component.
+
+    ``min_subset_size`` remains in the signature for command-line/API
+    compatibility.  The original implementation has no minimum-size filter;
+    it only stops when the component has at most ``max_subset_size`` leaves.
+    """
+    del min_subset_size
+    tree = _read_original_guide_tree(starting_tree_file)
+    component_taxa = set(component_taxa)
+    all_taxa = set(_leaf_labels(tree))
+    if component_taxa != all_taxa:
+        tree.retain_taxa_with_labels(component_taxa)
+        tree.update_bipartitions()
+
+    edge = _original_centroid_edge(tree)
+    side1 = set(leaf.taxon.label for leaf in edge.head_node.leaf_node_iter())
+    side2 = set(_leaf_labels(tree)) - side1
+    return side1, side2
 
 
 def decompose_like_original_helper(
@@ -360,53 +418,20 @@ def decompose_like_original_helper(
     max_subset_size,
     min_subset_size=5,
 ):
-    t = Tree(starting_tree_file, format=1)
-    all_taxa = set(t.get_leaf_names())
+    del min_subset_size
+    if max_subset_size < 1:
+        raise ValueError("max_subset_size must be at least 1")
 
-    next_components = [all_taxa]
-    done_components = []
+    def decompose_tree(tree):
+        num_leaves = len(tree.leaf_nodes())
+        if num_leaves <= max_subset_size:
+            return [_leaf_labels(tree)]
 
-    while next_components:
-        current_components = next_components
-        next_components = []
+        edge = _original_centroid_edge(tree)
+        tree1, tree2 = _bipartition_by_original_edge(tree, edge)
+        return decompose_tree(tree1) + decompose_tree(tree2)
 
-        for component in current_components:
-            split = centroid_bisect_taxa(
-                component,
-                starting_tree_file,
-                min_subset_size,
-            )
-
-            if split is None:
-                if len(component) <= max_subset_size:
-                    if len(component) >= min_subset_size:
-                        done_components.append(component)
-                    else:
-                        raise RuntimeError(
-                            f"Component has fewer than {min_subset_size} taxa."
-                        )
-                else:
-                    raise RuntimeError(
-                        f"Could not split component of size {len(component)}. "
-                        f"Try increasing --max_subset_size."
-                    )
-
-                continue
-
-            side1, side2 = split
-
-            for side_name, side in [("T1", side1), ("T2", side2)]:
-                if len(side) > max_subset_size:
-                    next_components.append(side)
-                else:
-                    if len(side) >= min_subset_size:
-                        done_components.append(side)
-                    else:
-                        raise RuntimeError(
-                            f"{side_name} has fewer than {min_subset_size} leaves."
-                        )
-
-    return done_components
+    return decompose_tree(_read_original_guide_tree(starting_tree_file))
 
 
 def write_subset_files(subsets, subset_dir):
@@ -429,19 +454,14 @@ def write_subset_files(subsets, subset_dir):
 
 
 def prune_tree_to_subset(tree_str, subset_taxa, min_taxa):
-    t = Tree(tree_str, format=1)
-
-    keep = [
-        taxon for taxon in t.get_leaf_names()
-        if taxon in subset_taxa
-    ]
+    t = dendropy.Tree.get(data=tree_str, schema="newick")
+    keep = [taxon for taxon in _leaf_labels(t) if taxon in subset_taxa]
 
     if len(keep) < min_taxa:
         return None
 
-    t.prune(keep, preserve_branch_length=True)
-
-    return t.write(format=1)
+    t.retain_taxa_with_labels(keep)
+    return t.as_string(schema="newick", suppress_rooting=True).strip()
 
 
 def build_subset_gene_trees(
@@ -587,6 +607,10 @@ def main():
         "--min_subset_size",
         type=int,
         default=5,
+        help=(
+            "Compatibility option retained from the previous implementation. "
+            "The original TreeMerge decomposition has no minimum-size filter."
+        ),
     )
 
     parser.add_argument(
