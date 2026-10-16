@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import dendropy
@@ -454,13 +455,46 @@ def write_subset_files(subsets, subset_dir):
 
 
 def prune_tree_to_subset(tree_str, subset_taxa, min_taxa):
-    t = dendropy.Tree.get(data=tree_str, schema="newick")
-    keep = [taxon for taxon in _leaf_labels(t) if taxon in subset_taxa]
+    try:
+        t = dendropy.Tree.get(data=tree_str, schema="newick")
+    except dendropy.dataio.newickreader.NewickReader.NewickReaderDuplicateTaxonError as exc:
+        raise ValueError(
+            "Cannot prune a tree with duplicate leaf labels: "
+            + str(exc).split("Duplicate taxon labels: ")[-1]
+        ) from exc
+    leaf_nodes = list(t.leaf_node_iter())
+    leaf_labels = [leaf.taxon.label for leaf in leaf_nodes]
+
+    duplicate_labels = {
+        label for label, count in Counter(leaf_labels).items() if count > 1
+    }
+    if duplicate_labels:
+        duplicates = ", ".join(sorted(duplicate_labels))
+        raise ValueError(
+            "Cannot prune a tree with duplicate leaf labels: " + duplicates
+        )
+
+    # Select Taxon objects from leaf nodes. Internal support labels live on
+    # Node.label and are therefore never considered taxa here.
+    selected_leaves = [
+        leaf for leaf in leaf_nodes if leaf.taxon.label in subset_taxa
+    ]
+    keep = [leaf.taxon for leaf in selected_leaves]
 
     if len(keep) < min_taxa:
         return None
 
-    t.retain_taxa_with_labels(keep)
+    t.retain_taxa(keep)
+    retained_labels = [leaf.taxon.label for leaf in t.leaf_node_iter()]
+    expected_labels = {leaf.taxon.label for leaf in selected_leaves}
+    if set(retained_labels) != expected_labels or len(retained_labels) != len(
+        expected_labels
+    ):
+        raise RuntimeError(
+            "Pruned gene tree taxa do not match the selected leaf identities: "
+            f"expected {sorted(expected_labels)}, got {sorted(retained_labels)}"
+        )
+
     return t.as_string(schema="newick", suppress_rooting=True).strip()
 
 
