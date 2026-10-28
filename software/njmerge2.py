@@ -25,10 +25,23 @@ import time
 
 def tree_to_mst(strefile, treefiles):
     """
-    Uses Fitch's algorithm to derive the spanning tree on subsets from
-    a starting tree, implementing the approach described in Theorem 9
-    (modified to handle the special case where edges less than two edges
-    apart in the starting tree are deleted).
+    Derives the spanning tree on subsets from a starting tree using
+    topological distances between one representative taxon per subset.
+
+    One representative leaf is selected from each subset tree. The starting
+    tree is pruned to contain only those representatives, all branch lengths
+    are set to 1 (so distances are purely topological), and a phylogenetic
+    distance matrix is computed. The minimum spanning tree of that matrix
+    gives the correct adjacency structure between subsets as implied by the
+    guide tree topology.
+
+    Using a single representative per subset (rather than labelling all
+    internal nodes via Fitch's algorithm) ensures that edge weights reflect
+    true inter-subset distances, yielding a unique and topologically correct
+    MST.  When all edge weights are equal (as in the Fitch approach) the MST
+    is not unique and NetworkX may return a star or other structure that does
+    not match the guide tree, causing incorrect merge ordering and degraded
+    RF distances.
 
     Parameters
     ----------
@@ -39,63 +52,45 @@ def tree_to_mst(strefile, treefiles):
     -------
     adjacency matrix for minimum spanning tree (MST) connecting subset tree files
     """
-    # Step 0: Reading starting tree
     taxa = dendropy.TaxonNamespace()
     stre = dendropy.Tree.get(path=strefile,
                              schema="newick",
                              taxon_namespace=taxa)
 
-    # Step 1: Abstract taxa labels from subset trees
-    subsets = []
+    # Pick one representative leaf label per subset and record its subset index
+    ltos = {}
     for i, f in enumerate(treefiles):
         ti = dendropy.Tree.get(path=f,
                                schema="newick",
                                taxon_namespace=taxa)
+        li = ti.leaf_nodes()[0].taxon.label
+        ltos[li] = i
 
-        li = [n.taxon.label for n in ti.leaf_nodes()]
-        subsets.append(set(li))
+    labs = list(ltos.keys())
 
-    # Step 2: Run Fitch's algorithm to label each internal node with the
-    # set of subset indices whose taxa appear in that subtree
-    edges = []
-    for n in stre.postorder_node_iter():
-        if n.is_leaf():
-            label = n.taxon.label
-            for i in range(len(subsets)):
-                if label in subsets[i]:
-                    n.subset = set([i])
-        else:
-            children = n.child_nodes()
-            union = children[0].subset
-            inter = children[0].subset
-            for c in children[1:]:
-                union = union.union(c.subset)
-                inter = inter.intersection(c.subset)
-            if len(list(inter)) == 0:
-                n.subset = union
-            else:
-                n.subset = inter
+    # Prune starting tree to representatives only
+    stre.retain_taxa_with_labels(labs)
+    stre.collapse_basal_bifurcation(set_as_unrooted_tree=True)
 
-            if len(list(n.subset)) > 1:
-                edges.append(list(n.subset))
-                if len(list(n.subset)) > 2:
-                    print("WARNING: Bad subset decomposition!\n")
+    # Set all branch lengths to 1 so distances are purely topological
+    edges = [e for e in stre.preorder_edge_iter()]
+    for e in edges[1:]:
+        e.length = 1.0
 
-    n = len(subsets)
+    # Build pairwise distance matrix between representatives
+    pdm = stre.phylogenetic_distance_matrix()
+    n = len(labs)
     dmat = numpy.zeros((n, n))
-    for e in edges:
-        ne = len(e)
-        for i in range(ne - 1):
-            ei = e[i]
-            for j in range(i + 1, ne):
-                ej = e[j]
-                dmat[ei, ej] = 1
-                dmat[ej, ei] = 1
+    for li in labs:
+        i = ltos[li]
+        xi = pdm.taxon_namespace.get_taxon(li)
+        for lj in labs:
+            j = ltos[lj]
+            xj = pdm.taxon_namespace.get_taxon(lj)
+            dmat[i, j] = pdm.patristic_distance(xi, xj)
 
-    # Turn distance matrix into graph
+    # Turn distance matrix into graph and find MST
     graph = networkx.from_numpy_array(dmat)
-
-    # Turn graph into MST
     mst = networkx.minimum_spanning_tree(graph)
 
     # Return MST as an adjacency matrix
@@ -124,7 +119,7 @@ def njmerge2(dmatfile, taxafile, treefiles, mstmat):
     """
     Parameters
     ----------
-    dmatfile : file containing distance matrix on full leaf set (phylip format) 
+    dmatfile : file containing distance matrix on full leaf set (phylip format)
     taxafile : file containing taxon labels for rows in distance matrix
     treefiles : a list of files containing subset trees (newick format)
     mstmat : adjacency matrix for minimum spanning tree on subsetes
