@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from ete3 import Tree
+from ete3.coretype.tree import TreeError
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -439,7 +440,27 @@ def prune_tree_to_subset(tree_str, subset_taxa, min_taxa):
     if len(keep) < min_taxa:
         return None
 
-    t.prune(keep, preserve_branch_length=True)
+    try:
+        # Retain the exact July 9 output whenever the original call succeeds.
+        t.prune(keep, preserve_branch_length=True)
+    except TreeError as exc:
+        if "Ambiguous node name:" not in str(exc):
+            raise
+
+        # Numeric leaf taxa may collide with internal support/node labels.
+        # Select the leaves by identity, not ETE3's ambiguous name lookup.
+        # Start from the original tree since prune() may have mutated it.
+        t = Tree(tree_str, format=1)
+        leaf_names = t.get_leaf_names()
+        if len(leaf_names) != len(set(leaf_names)):
+            raise ValueError(
+                "Gene tree contains duplicate leaf taxon names"
+            ) from exc
+        keep_nodes = [
+            leaf for leaf in t.iter_leaves()
+            if leaf.name in subset_taxa
+        ]
+        t.prune(keep_nodes, preserve_branch_length=True)
 
     return t.write(format=1)
 
